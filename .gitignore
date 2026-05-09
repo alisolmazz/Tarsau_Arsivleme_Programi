@@ -1,0 +1,5 @@
+*.o
+tarsau
+tarsau.exe
+*.sau
+read_docx.py
