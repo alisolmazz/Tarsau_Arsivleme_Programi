@@ -198,7 +198,7 @@ void extract_archive(const char *archive_file, const char *target_dir) {
         char buffer[8192];
         long remaining = file_size;
         while (remaining > 0) {
-            size_t to_read = remaining < (long)sizeof(buffer) ? remaining : sizeof(buffer);
+            size_t to_read = remaining < (long)sizeof(buffer) ? (size_t)remaining : sizeof(buffer);
             size_t bytes = fread(buffer, 1, to_read, in);
             if (bytes == 0) break;
             fwrite(buffer, 1, bytes, out);
