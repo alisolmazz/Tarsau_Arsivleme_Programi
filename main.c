@@ -251,6 +251,10 @@ int main(int argc, char *argv[]) {
             printf("Hata: Arsiv dosyasi belirtilmedi.\n");
             return EXIT_FAILURE;
         }
+        if (argc > 4) {
+            printf("Hata: -a parametresinden sonra en fazla 2 arguman alabilir.\n");
+            return EXIT_FAILURE;
+        }
         const char *archive_file = argv[2];
         const char *target_dir = "."; // Varsayılan mevcut dizin
         if (argc >= 4) {
