@@ -1,6 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <fcntl.h>
+
+#define MAX_FILES 32
+#define MAX_TOTAL_SIZE (200 * 1024 * 1024) // 200 MB
 
 void print_usage() {
     printf("Kullanim:\n");
@@ -8,24 +15,136 @@ void print_usage() {
     printf("  Arsiv Acma: tarsau -a arsiv.sau [hedef_dizin]\n");
 }
 
+int is_ascii_file(const char *filename) {
+    FILE *f = fopen(filename, "rb");
+    if (!f) return 0; // Dosya acilamadi
+    int c;
+    while ((c = fgetc(f)) != EOF) {
+        if (c > 127) { // Standart ASCII karakter araligi: 0-127
+            fclose(f);
+            return 0; // ASCII degil
+        }
+    }
+    fclose(f);
+    return 1;
+}
+
+void archive_files(int file_count, char *files[], const char *output_file) {
+    if (file_count > MAX_FILES) {
+        printf("Hata: En fazla %d dosya birlestirilebilir.\n", MAX_FILES);
+        exit(EXIT_FAILURE);
+    }
+
+    long total_size = 0;
+    struct stat st;
+    
+    // Boyut kontrolleri ve ASCII kontrolü
+    for (int i = 0; i < file_count; i++) {
+        if (stat(files[i], &st) != 0) {
+            printf("Hata: %s dosyasi bulunamadi veya erisilemiyor.\n", files[i]);
+            exit(EXIT_FAILURE);
+        }
+        
+        if (!is_ascii_file(files[i])) {
+            printf("%s giris dosyasinin formati uyumsuzdur!\n", files[i]);
+            exit(EXIT_FAILURE);
+        }
+        
+        total_size += st.st_size;
+    }
+
+    if (total_size > MAX_TOTAL_SIZE) {
+        printf("Hata: Giris dosyalarinin toplam boyutu 200 MB'i gecemez.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Metadata olusturma: |Dosya_adi,izinler,boyut|
+    char metadata[8192] = ""; 
+    for (int i = 0; i < file_count; i++) {
+        stat(files[i], &st);
+        char entry[512];
+        // Linux/Unix izinlerini 3 haneli octal (sekizlik) formatta aliyoruz (orn: 0644)
+        int perms = st.st_mode & 0777;
+        sprintf(entry, "|%s,%04o,%ld|", files[i], perms, (long)st.st_size);
+        strcat(metadata, entry);
+    }
+
+    // Arsiv dosyasina yazma
+    FILE *out = fopen(output_file, "wb");
+    if (!out) {
+        printf("Hata: %s dosyasi olusturulamadi.\n", output_file);
+        exit(EXIT_FAILURE);
+    }
+
+    int metadata_len = strlen(metadata);
+    // İlk 10 bayt, ilk bölümün (metadata) toplam boyutunu içermeli.
+    // Kendi boyutu (10 bayt) da dahil mi? Genelde hayır, sadece okunacak metadata uzunluğu
+    // daha mantıklıdır, ancak isterdeki "ilk bölümün ... boyutu" ifadesinden 10 + metadata_len alıyoruz.
+    fprintf(out, "%010d%s", metadata_len + 10, metadata);
+
+    // Dosyaların içeriklerini arsive ekleme
+    for (int i = 0; i < file_count; i++) {
+        FILE *in = fopen(files[i], "rb");
+        if (in) {
+            char buffer[8192];
+            size_t bytes;
+            while ((bytes = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+                fwrite(buffer, 1, bytes, out);
+            }
+            fclose(in);
+        }
+    }
+    
+    fclose(out);
+    printf("Dosyalar birlestirildi.\n");
+}
+
+void extract_archive(const char *archive_file, const char *target_dir) {
+    // TODO: Bir sonraki aşamada yazılacak
+    printf("Arsiv acma henuz implement edilmedi. Hedef: %s\n", target_dir);
+}
+
 int main(int argc, char *argv[]) {
-    // Argüman kontrolü
     if (argc < 2) {
         print_usage();
         return EXIT_FAILURE;
     }
 
-    // -b parametresi (Arşivleme işlemi)
     if (strcmp(argv[1], "-b") == 0) {
-        printf("Arsivleme (-b) islemi secildi.\n");
-        // TODO: Boyut limitleri, dosya türü doğrulama ve arşive yazma işlemi eklenecek
+        char *input_files[MAX_FILES + 5];
+        int file_count = 0;
+        char *output_file = "a.sau"; // Varsayilan arsiv adi
+        
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "-o") == 0) {
+                if (i + 1 < argc) {
+                    output_file = argv[i + 1];
+                    i++; // Sonraki argumani atla (arsiv adi)
+                }
+            } else {
+                input_files[file_count++] = argv[i];
+            }
+        }
+        
+        if (file_count == 0) {
+            printf("Hata: Birlestirilecek dosya belirtilmedi.\n");
+            return EXIT_FAILURE;
+        }
+        
+        archive_files(file_count, input_files, output_file);
     } 
-    // -a parametresi (Arşivden çıkarma işlemi)
     else if (strcmp(argv[1], "-a") == 0) {
-        printf("Arsiv acma (-a) islemi secildi.\n");
-        // TODO: .sau doğrulaması, dizin oluşturma ve dosyaları ayrıştırma işlemi eklenecek
+        if (argc < 3) {
+            printf("Hata: Arsiv dosyasi belirtilmedi.\n");
+            return EXIT_FAILURE;
+        }
+        const char *archive_file = argv[2];
+        const char *target_dir = "."; // Varsayılan mevcut dizin
+        if (argc >= 4) {
+            target_dir = argv[3];
+        }
+        extract_archive(archive_file, target_dir);
     } 
-    // Hatalı parametre
     else {
         printf("Hata: Gecersiz parametre '%s'\n", argv[1]);
         print_usage();
