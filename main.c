@@ -6,6 +6,14 @@
 #include <ctype.h>
 #include <fcntl.h>
 
+#ifdef _WIN32
+#include <direct.h>
+#define MKDIR(path) _mkdir(path)
+#else
+#define MKDIR(path) mkdir(path, 0777)
+#endif
+
+
 #define MAX_FILES 32
 #define MAX_TOTAL_SIZE (200 * 1024 * 1024) // 200 MB
 
@@ -100,8 +108,109 @@ void archive_files(int file_count, char *files[], const char *output_file) {
 }
 
 void extract_archive(const char *archive_file, const char *target_dir) {
-    // TODO: Bir sonraki aşamada yazılacak
-    printf("Arsiv acma henuz implement edilmedi. Hedef: %s\n", target_dir);
+    const char *ext = strrchr(archive_file, '.');
+    if (!ext || strcmp(ext, ".sau") != 0) {
+        printf("Arsiv dosyasi uygunsuz veya bozuk!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    FILE *in = fopen(archive_file, "rb");
+    if (!in) {
+        printf("Arsiv dosyasi uygunsuz veya bozuk!\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char size_buf[11] = {0};
+    if (fread(size_buf, 1, 10, in) != 10) {
+        printf("Arsiv dosyasi uygunsuz veya bozuk!\n");
+        fclose(in);
+        exit(EXIT_FAILURE);
+    }
+    
+    long total_section1_size = atol(size_buf);
+    if (total_section1_size <= 10) {
+        printf("Arsiv dosyasi uygunsuz veya bozuk!\n");
+        fclose(in);
+        exit(EXIT_FAILURE);
+    }
+
+    long metadata_len = total_section1_size - 10;
+    
+    char *metadata = malloc(metadata_len + 1);
+    if (!metadata) {
+        printf("Hata: Bellek ayrilamadi.\n");
+        fclose(in);
+        exit(EXIT_FAILURE);
+    }
+    
+    if (fread(metadata, 1, metadata_len, in) != (size_t)metadata_len) {
+        printf("Arsiv dosyasi uygunsuz veya bozuk!\n");
+        free(metadata);
+        fclose(in);
+        exit(EXIT_FAILURE);
+    }
+    metadata[metadata_len] = '\0';
+
+    if (strcmp(target_dir, ".") != 0) {
+        MKDIR(target_dir);
+    }
+
+    char *ptr = metadata;
+    int files_extracted = 0;
+    
+    while (*ptr == '|') {
+        ptr++; 
+        char *end = strchr(ptr, '|');
+        if (!end) break;
+        
+        *end = '\0'; 
+        
+        char filename[256];
+        int perms;
+        long file_size;
+        
+        if (sscanf(ptr, "%255[^,],%o,%ld", filename, &perms, &file_size) != 3) {
+            printf("Arsiv dosyasi uygunsuz veya bozuk!\n");
+            free(metadata);
+            fclose(in);
+            exit(EXIT_FAILURE);
+        }
+        
+        char filepath[1024];
+        if (strcmp(target_dir, ".") == 0) {
+            sprintf(filepath, "%s", filename);
+        } else {
+            sprintf(filepath, "%s/%s", target_dir, filename);
+        }
+        
+        FILE *out = fopen(filepath, "wb");
+        if (!out) {
+            printf("Hata: %s olusturulamadi.\n", filepath);
+            free(metadata);
+            fclose(in);
+            exit(EXIT_FAILURE);
+        }
+        
+        char buffer[8192];
+        long remaining = file_size;
+        while (remaining > 0) {
+            size_t to_read = remaining < (long)sizeof(buffer) ? remaining : sizeof(buffer);
+            size_t bytes = fread(buffer, 1, to_read, in);
+            if (bytes == 0) break;
+            fwrite(buffer, 1, bytes, out);
+            remaining -= bytes;
+        }
+        fclose(out);
+        
+        chmod(filepath, perms);
+        files_extracted++;
+        
+        ptr = end + 1; 
+    }
+
+    free(metadata);
+    fclose(in);
+    printf("%s dizininde %d dosya acildi.\n", target_dir, files_extracted);
 }
 
 int main(int argc, char *argv[]) {
